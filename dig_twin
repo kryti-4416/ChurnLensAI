@@ -1,0 +1,131 @@
+import pandas as pd
+import numpy as np
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score
+
+# ----------------------------
+# 1. LOAD DATA
+# ----------------------------
+data = pd.read_csv(
+    "ratings.csv",
+    sep="\t",
+    names=["userId", "movieId", "rating", "timestamp"]
+)
+
+data["timestamp"] = pd.to_datetime(data["timestamp"], unit="s")
+
+print("\n--- BASIC INFO ---")
+print("Total rows:", len(data))
+print("Unique users:", data["userId"].nunique())
+print("Unique movies:", data["movieId"].nunique())
+
+# ----------------------------
+# 2. FEATURE ENGINEERING
+# ----------------------------
+user_features = data.groupby("userId").agg({
+    "rating": ["count", "mean"],
+    "timestamp": "max"
+})
+
+user_features.columns = ["rating_count", "rating_mean", "last_activity"]
+user_features = user_features.reset_index()
+
+reference_date = data["timestamp"].max()
+
+user_features["days_inactive"] = (
+    reference_date - user_features["last_activity"]
+).dt.days
+
+# ----------------------------
+# 3. CHURN LABEL
+# ----------------------------
+user_features["churn"] = (user_features["days_inactive"] > 60).astype(int)
+
+# ----------------------------
+# 4. EXTRA FEATURES
+# ----------------------------
+user_features["activity_rate"] = (
+    user_features["rating_count"] / (user_features["days_inactive"] + 1)
+)
+
+user_features["is_high_rater"] = (user_features["rating_mean"] > 3.5).astype(int)
+
+# ----------------------------
+# 5. MODEL TRAINING
+# ----------------------------
+feature_cols = [
+    "rating_count",
+    "rating_mean",
+    "activity_rate",
+    "is_high_rater"
+]
+
+X = user_features[feature_cols]
+y = user_features["churn"]
+
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.2, random_state=42
+)
+
+model = RandomForestClassifier(n_estimators=200, random_state=42)
+model.fit(X_train, y_train)
+
+y_pred = model.predict(X_test)
+
+print("\n=== MODEL PERFORMANCE ===")
+print("Accuracy:", accuracy_score(y_test, y_pred))
+
+# ----------------------------
+# 6. RETENTION STRATEGY ENGINE
+# ----------------------------
+def retention_strategy(prob):
+    if prob > 0.90:
+        return "CRITICAL: 30% discount + call support + urgent intervention"
+    elif prob > 0.75:
+        return "HIGH RISK: 20% discount + email campaign + push notifications"
+    elif prob > 0.55:
+        return "MEDIUM RISK: recommendations + engagement banner"
+    elif prob > 0.30:
+        return "LOW RISK: reminder notifications + updates"
+    else:
+        return "VERY SAFE: no action needed"
+
+# ----------------------------
+# 7. DIGITAL TWIN SIMULATION
+# ----------------------------
+def simulate_user(row):
+    features_df = pd.DataFrame([{
+        "rating_count": row["rating_count"],
+        "rating_mean": row["rating_mean"],
+        "activity_rate": row["activity_rate"],
+        "is_high_rater": row["is_high_rater"]
+    }])
+
+    prob = model.predict_proba(features_df)[0][1]
+    action = retention_strategy(prob)
+
+    return pd.Series([prob, action])
+
+user_features[["churn_prob", "action"]] = user_features.apply(simulate_user, axis=1)
+
+# ----------------------------
+# 8. FINAL DASHBOARD OUTPUT
+# ----------------------------
+dashboard = user_features[[
+    "userId",
+    "rating_count",
+    "rating_mean",
+    "activity_rate",
+    "is_high_rater",
+    "days_inactive",
+    "churn",
+    "churn_prob",
+    "action"
+]]
+
+print("\n=== FULL DASHBOARD SAMPLE ===")
+print(dashboard.head(10))
+
+print("\n=== RANDOM SIMULATION SAMPLE ===")
+print(dashboard.sample(10, random_state=42))
