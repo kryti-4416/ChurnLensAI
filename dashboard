@@ -1,0 +1,117 @@
+import streamlit as st
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+
+# ----------------------------
+# 1. LOAD DATA
+# ----------------------------
+data = pd.read_csv(
+    "ratings.csv",
+    sep="\t",
+    names=["userId", "movieId", "rating", "timestamp"]
+)
+
+data["timestamp"] = pd.to_datetime(data["timestamp"], unit="s")
+
+# ----------------------------
+# 2. FEATURE ENGINEERING
+# ----------------------------
+user_features = data.groupby("userId").agg({
+    "rating": ["count", "mean", "std"],
+    "timestamp": "max"
+})
+
+user_features.columns = [
+    "rating_count",
+    "rating_mean",
+    "rating_std",
+    "last_activity"
+]
+
+user_features = user_features.reset_index()
+
+reference_date = data["timestamp"].max()
+
+user_features["days_inactive"] = (
+    reference_date - user_features["last_activity"]
+).dt.days
+
+user_features["activity_rate"] = (
+    user_features["rating_count"] / (user_features["days_inactive"] + 1)
+)
+
+user_features["is_high_rater"] = (user_features["rating_mean"] > 3.5).astype(int)
+
+user_features["churn"] = (user_features["days_inactive"] > 60).astype(int)
+
+# ----------------------------
+# 3. MODEL
+# ----------------------------
+features = [
+    "rating_count",
+    "rating_mean",
+    "activity_rate",
+    "is_high_rater",
+    "rating_std"
+]
+
+X = user_features[features]
+y = user_features["churn"]
+
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2)
+
+model = RandomForestClassifier(n_estimators=200)
+model.fit(X_train, y_train)
+
+user_features["churn_prob"] = model.predict_proba(X)[0: 1]
+
+# ----------------------------
+# 4. TITLE
+# ----------------------------
+st.title("📊 ChurnLens AI Dashboard")
+
+st.subheader("User Churn Prediction Table")
+st.dataframe(user_features.head(20))
+
+# ----------------------------
+# 5. FILTER
+# ----------------------------
+threshold = st.slider("Churn Risk Threshold", 0.0, 1.0, 0.5)
+
+filtered = user_features[user_features["churn_prob"] > threshold]
+
+st.subheader("High Risk Users")
+st.dataframe(filtered)
+
+# ----------------------------
+# 6. CHURN DISTRIBUTION GRAPH
+# ----------------------------
+st.subheader("Churn Probability Distribution")
+
+fig, ax = plt.subplots()
+ax.hist(user_features["churn_prob"], bins=20)
+ax.set_xlabel("Churn Probability")
+ax.set_ylabel("Users")
+
+st.pyplot(fig)
+
+# ----------------------------
+# 7. RISK BREAKDOWN PIE CHART
+# ----------------------------
+st.subheader("Risk Segments")
+
+labels = ["Low", "Medium", "High"]
+
+low = (user_features["churn_prob"] < 0.3).sum()
+med = ((user_features["churn_prob"] >= 0.3) & (user_features["churn_prob"] < 0.7)).sum()
+high = (user_features["churn_prob"] >= 0.7).sum()
+
+sizes = [low, med, high]
+
+fig2, ax2 = plt.subplots()
+ax2.pie(sizes, labels=labels, autopct="%1.1f%%")
+
+st.pyplot(fig2)
